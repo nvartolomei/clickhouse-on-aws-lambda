@@ -7,6 +7,8 @@ endif ()
 # If you do not know what modes you need, turn this option OFF and enable SERVER and CLIENT only.
 option (ENABLE_CLICKHOUSE_ALL "Enable all ClickHouse modes by default" ON)
 
+option (ENABLE_CLICKHOUSE_LAMBDA_SERVER "Lambda server mode" ${ENABLE_CLICKHOUSE_ALL})
+
 option (ENABLE_CLICKHOUSE_SERVER "Server mode (main mode)" ${ENABLE_CLICKHOUSE_ALL})
 option (ENABLE_CLICKHOUSE_CLIENT "Client mode (interactive tui/shell that connects to the server)"
     ${ENABLE_CLICKHOUSE_ALL})
@@ -215,6 +217,7 @@ macro(clickhouse_program_add name)
     clickhouse_program_add_executable(${name})
 endmacro()
 
+add_subdirectory (lambda-server)
 add_subdirectory (server)
 add_subdirectory (client)
 add_subdirectory (local)
@@ -341,6 +344,9 @@ else ()
     target_link_libraries (clickhouse PRIVATE clickhouse_common_io string_utils ${HARMFUL_LIB})
     target_include_directories (clickhouse PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
+    if (ENABLE_CLICKHOUSE_LAMBDA_SERVER)
+        clickhouse_target_link_split_lib(clickhouse lambda-server)
+    endif()
     if (ENABLE_CLICKHOUSE_SERVER)
         clickhouse_target_link_split_lib(clickhouse server)
     endif ()
@@ -382,6 +388,11 @@ else ()
     endif ()
 
     set (CLICKHOUSE_BUNDLE)
+    if (ENABLE_CLICKHOUSE_LAMBDA_SERVER)
+        add_custom_target (clickhouse-lambda-server ALL COMMAND ${CMAKE_COMMAND} -E create_symlink clickhouse clickhouse-lambda-server DEPENDS clickhouse)
+        install (FILES "${CMAKE_CURRENT_BINARY_DIR}/clickhouse-lambda-server" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT clickhouse)
+        list(APPEND CLICKHOUSE_BUNDLE clickhouse-lambda-server)
+    endif ()
     if (ENABLE_CLICKHOUSE_SERVER)
         add_custom_target (clickhouse-server ALL COMMAND ${CMAKE_COMMAND} -E create_symlink clickhouse clickhouse-server DEPENDS clickhouse)
         install (FILES "${CMAKE_CURRENT_BINARY_DIR}/clickhouse-server" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT clickhouse)

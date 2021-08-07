@@ -256,12 +256,14 @@ endif ()
 
 if (USE_INTERNAL_AWS_S3_LIBRARY)
     add_subdirectory(aws-s3-cmake)
+    add_subdirectory(aws-lambda-cpp-cmake)
 
     # The library is large - avoid bloat.
     target_compile_options (aws_s3 PRIVATE -g0)
     target_compile_options (aws_s3_checksums PRIVATE -g0)
 
 endif ()
+
 
 if (USE_BASE64)
     add_subdirectory (base64-cmake)
@@ -328,4 +330,3 @@ if (USE_NURAFT)
 endif()
 
 add_subdirectory(fast_float)
-

@@ -4,6 +4,10 @@ else()
     set (DEFAULT_ENABLE_CYRUS_SASL 0)
 endif()
 
+if (NOT ENABLE_CYRUS_SASL)
+    return()
+endif()
+
 OPTION(ENABLE_CYRUS_SASL "Enable cyrus-sasl" ${DEFAULT_ENABLE_CYRUS_SASL})
 if (NOT EXISTS "${ClickHouse_SOURCE_DIR}/contrib/cyrus-sasl/README")
     message (WARNING "submodule contrib/cyrus-sasl is missing. to fix try run: \n git submodule update --init --recursive")

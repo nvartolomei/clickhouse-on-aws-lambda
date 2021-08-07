@@ -228,3 +228,6 @@
 [submodule "contrib/libpqxx"]
 	path = contrib/libpqxx
 	url = https://github.com/ClickHouse-Extras/libpqxx.git
+[submodule "contrib/aws-lambda-cpp"]
+	path = contrib/aws-lambda-cpp
+	url = https://github.com/awslabs/aws-lambda-cpp.git

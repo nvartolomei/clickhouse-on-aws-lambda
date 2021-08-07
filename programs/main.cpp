@@ -26,6 +26,9 @@
 
 
 /// Universal executable for various clickhouse applications
+#if ENABLE_CLICKHOUSE_LAMBDA_SERVER
+int mainEntryClickHouseLambdaServer(int argc, char ** argv);
+#endif
 #if ENABLE_CLICKHOUSE_SERVER
 int mainEntryClickHouseServer(int argc, char ** argv);
 #endif
@@ -89,6 +92,9 @@ using MainFunc = int (*)(int, char**);
 /// Add an item here to register new application
 std::pair<const char *, MainFunc> clickhouse_applications[] =
 {
+#if ENABLE_CLICKHOUSE_LAMBDA_SERVER
+    {"lambda-server", mainEntryClickHouseLambdaServer},
+#endif
 #if ENABLE_CLICKHOUSE_LOCAL
     {"local", mainEntryClickHouseLocal},
 #endif
