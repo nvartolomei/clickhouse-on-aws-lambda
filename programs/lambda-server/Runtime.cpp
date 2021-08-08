@@ -37,7 +37,7 @@ static char const TAG[] = "lambda";
 
 namespace DB
 {
-int Runtime::run(int argc, char ** argv)
+int Runtime::main(const std::vector<std::string> & args)
 {
     registerFunctions();
     registerAggregateFunctions();
@@ -58,7 +58,7 @@ int Runtime::run(int argc, char ** argv)
     attach<StorageSystemOne>(*system_database, "one");
     attach<StorageSystemNumbers>(*system_database, "numbers", false);
 
-    if (argc == 2 && std::string(argv[1]) == "local")
+    if (args.size() == 1 && args[0] == "local")
     {
         // Local test mode, reads payload from stdin.
         std::ostringstream os;

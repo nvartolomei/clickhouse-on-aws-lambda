@@ -5,15 +5,16 @@
 #pragma once
 
 #include <Interpreters/Context.h>
+#include <Poco/Util/ServerApplication.h>
 
 namespace DB
 {
-class Runtime
+class Runtime : public Poco::Util::ServerApplication
 {
     ContextMutablePtr global_context;
 
 public:
-    int run(int argc, char ** argv);
+    int main(const std::vector<std::string> &) override;
     std::string handleRequest(std::string const& input);
 };
 }
