@@ -26,14 +26,11 @@
 #include <Poco/ConsoleChannel.h>
 #include <Poco/JSON/Parser.h>
 #include <common/DateLUT.h>
-#include <common/defines.h>
 
 std::function<std::shared_ptr<Aws::Utils::Logging::LogSystemInterface>()> GetConsoleLoggerFactory()
 {
     return [] { return Aws::MakeShared<Aws::Utils::Logging::ConsoleLogSystem>("console_logger", Aws::Utils::Logging::LogLevel::Trace); };
 }
-
-static char const TAG[] = "lambda";
 
 
 namespace DB
@@ -81,13 +78,6 @@ int Runtime::main(const std::vector<std::string> & args)
     options.loggingOptions.logger_create_fn = GetConsoleLoggerFactory();
     InitAPI(options);
     {
-        Aws::Client::ClientConfiguration config;
-        config.region = Aws::Environment::GetEnv("AWS_REGION");
-        config.caFile = "/etc/pki/tls/certs/ca-bundle.crt";
-
-        auto credentialsProvider = Aws::MakeShared<Aws::Auth::EnvironmentAWSCredentialsProvider>(TAG);
-        UNUSED(credentialsProvider);
-        // S3::S3Client client(credentialsProvider, config);
         auto handler_fn = [&](aws::lambda_runtime::invocation_request const & req) {
             const auto result = handleRequest(req.payload);
 
