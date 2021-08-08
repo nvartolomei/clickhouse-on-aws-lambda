@@ -79,9 +79,18 @@ int Runtime::main(const std::vector<std::string> & args)
     InitAPI(options);
     {
         auto handler_fn = [&](aws::lambda_runtime::invocation_request const & req) {
-            const auto result = handleRequest(req.payload);
-
-            return aws::lambda_runtime::invocation_response::success(result, "application/json");
+            try
+            {
+                const auto result = handleRequest(req.payload);
+                return aws::lambda_runtime::invocation_response::success(
+                    result, "application/json");
+            }
+            catch (...)
+            {
+                std::string error_msg = "Failed to execute query: " + getCurrentExceptionMessage(false, false, false);
+                return aws::lambda_runtime::invocation_response::failure(
+                    error_msg, "Internal Server Error");
+            }
         };
         aws::lambda_runtime::run_handler(handler_fn);
     }
