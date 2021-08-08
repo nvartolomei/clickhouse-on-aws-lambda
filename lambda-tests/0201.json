@@ -1,0 +1,3 @@
+{
+    "query": "select extention, count() hits FROM s3('https://clickhouse-lambda-data.s3.eu-west-2.amazonaws.com/edgar_log_file_201706_7d/log201706*/log201706*.csv.zst', 'CSVWithNames', 'ip String,date String,time String,zone String,cik String,accession String,extention String,code String,size Float32,idx String,norefer String,noagent String,find String,crawler String,browser String') GROUP BY extention ORDER BY hits DESC LIMIT 5"
+}
