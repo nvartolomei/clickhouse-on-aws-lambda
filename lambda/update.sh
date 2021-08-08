@@ -10,9 +10,9 @@ if [[ ! -f "$clickhouse_binary" ]]; then
     exit 1
 fi
 
-version=$($clickhouse_binary server --version)
+version=$($clickhouse_binary 2>&1 ||:)
 
-if ! $(echo "$version" | grep -q "Click"); then
+if ! $(echo "$version" | grep -q "lambda-server"); then
     echo "Wrong ClickHouse build, should be aws lambda flavour."
     echo "Actual: $version"
     exit 1
