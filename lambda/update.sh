@@ -21,7 +21,7 @@ fi
 cp "$clickhouse_binary" ./tmp/
 objcopy -S "./tmp/$(basename $clickhouse_binary)"
 
-docker build -t clickhouse-on-aws-lambda .
+docker build -t clickhouse-on-aws-lambda:latest .
 
-docker tag $(basename "$docker_repository") "$docker_repository"
+docker tag clickhouse-on-aws-lambda:latest "$docker_repository"
 docker push "$docker_repository"
