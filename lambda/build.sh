@@ -1,8 +1,9 @@
 #!/bin/bash
 
+set -euo pipefail
+
 clickhouse_binary="$1"
 
-set -euo pipefail
 
 if [[ ! -f "$clickhouse_binary" ]]; then
     echo "Couldn't find binary at: $clickhouse_binary"
