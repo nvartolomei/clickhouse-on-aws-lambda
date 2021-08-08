@@ -1,14 +1,19 @@
-#include "LambdaServer.h"
+#include "Runtime.h"
 
-#include <common/defines.h>
-
+#include <Common/Exception.h>
 #include <iostream>
 
 int mainEntryClickHouseLambdaServer(int argc, char ** argv)
 {
-    UNUSED(argc);
-    UNUSED(argv);
-
-    std::cerr << "boo" << std::endl;
-    return 1;
+    DB::Runtime runtime;
+    try
+    {
+        return runtime.run(argc, argv);
+    }
+    catch (...)
+    {
+        std::cerr << DB::getCurrentExceptionMessage(true) << "\n";
+        auto code = DB::getCurrentExceptionCode();
+        return code ? code : 1;
+    }
 }

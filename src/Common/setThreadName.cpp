@@ -24,22 +24,24 @@ namespace ErrorCodes
 
 void setThreadName(const char * name)
 {
-#ifndef NDEBUG
-    if (strlen(name) > 15)
-        throw DB::Exception("Thread name cannot be longer than 15 bytes", DB::ErrorCodes::PTHREAD_ERROR);
-#endif
-
-#if defined(OS_FREEBSD)
-    pthread_set_name_np(pthread_self(), name);
-    if ((false))
-#elif defined(OS_DARWIN)
-    if (0 != pthread_setname_np(name))
-#elif defined(OS_SUNOS)
-    if (0 != pthread_setname_np(pthread_self(), name))
-#else
-    if (0 != prctl(PR_SET_NAME, name, 0, 0, 0))
-#endif
-        DB::throwFromErrno("Cannot set thread name with prctl(PR_SET_NAME, ...)", DB::ErrorCodes::PTHREAD_ERROR);
+    (void)name;
+// Not supported on lambda.
+// #ifndef NDEBUG
+//     if (strlen(name) > 15)
+//         throw DB::Exception("Thread name cannot be longer than 15 bytes", DB::ErrorCodes::PTHREAD_ERROR);
+// #endif
+//
+// #if defined(OS_FREEBSD)
+//     pthread_set_name_np(pthread_self(), name);
+//     if ((false))
+// #elif defined(OS_DARWIN)
+//     if (0 != pthread_setname_np(name))
+// #elif defined(OS_SUNOS)
+//     if (0 != pthread_setname_np(pthread_self(), name))
+// #else
+//     if (0 != prctl(PR_SET_NAME, name, 0, 0, 0))
+// #endif
+//         DB::throwFromErrno("Cannot set thread name with prctl(PR_SET_NAME, ...)", DB::ErrorCodes::PTHREAD_ERROR);
 }
 
 std::string getThreadName()

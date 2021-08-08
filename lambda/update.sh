@@ -19,6 +19,7 @@ if ! $(echo "$version" | grep -q "Click"); then
 fi
 
 cp "$clickhouse_binary" ./tmp/
+objcopy -S "./tmp/$(basename $clickhouse_binary)"
 
 docker build -t clickhouse-on-aws-lambda .
 
