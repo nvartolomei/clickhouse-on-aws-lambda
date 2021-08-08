@@ -23,6 +23,7 @@
 #include <aws/core/platform/Environment.h>
 #include <aws/core/utils/logging/ConsoleLogSystem.h>
 #include <aws/lambda-runtime/runtime.h>
+#include <Poco/ConsoleChannel.h>
 #include <Poco/JSON/Parser.h>
 #include <common/DateLUT.h>
 #include <common/defines.h>
@@ -39,6 +40,9 @@ namespace DB
 {
 int Runtime::main(const std::vector<std::string> & args)
 {
+    logger().root().setChannel(new Poco::ConsoleChannel);
+    logger().root().setLevel(Poco::Message::PRIO_TRACE);
+
     registerFunctions();
     registerAggregateFunctions();
     registerTableFunctions();
@@ -49,6 +53,8 @@ int Runtime::main(const std::vector<std::string> & args)
 
     global_context->makeGlobalContext();
     global_context->setApplicationType(Context::ApplicationType::SERVER);
+
+    global_context->setProgressCallback([](const Progress &) {});
 
     DateLUT::instance();
 
@@ -106,6 +112,8 @@ std::string Runtime::handleRequest(std::string const & input)
     context->makeQueryContext();
     context->setCurrentQueryId("a-lambda-query");
 
+    CurrentThread::QueryScope query_scope(context);
+
     std::stringstream result;
     result.exceptions(std::ios::failbit);
     WriteBufferFromOStream out_buf(result);
@@ -120,7 +128,21 @@ std::string Runtime::handleRequest(std::string const & input)
         auto out = FormatFactory::instance().getOutputFormatParallelIfPossible("JSON", out_buf, pipeline.getHeader(), context, {}, {});
         out->setAutoFlush();
 
+        /// Save previous progress callback if any. TODO Do it more conveniently.
+        auto previous_progress_callback = context->getProgressCallback();
+
+        /// NOTE Progress callback takes shared ownership of 'out'.
+        pipeline.setProgressCallback([out, previous_progress_callback](const Progress & progress) {
+            if (previous_progress_callback)
+                previous_progress_callback(progress);
+            out->onProgress(progress);
+        });
+
         pipeline.setOutputFormat(std::move(out));
+    }
+    else
+    {
+        pipeline.setProgressCallback(context->getProgressCallback());
     }
 
     auto executor = pipeline.execute();
