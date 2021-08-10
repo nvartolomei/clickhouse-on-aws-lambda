@@ -53,6 +53,9 @@ int Runtime::main(const std::vector<std::string> & args)
 
     global_context->setProgressCallback([](const Progress &) {});
 
+    // Required for invoking distributed query processing.
+    global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
+
     DateLUT::instance();
 
     auto & database_catalog = DatabaseCatalog::instance();

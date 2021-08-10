@@ -137,6 +137,7 @@ public:
 private:
 
     friend class StorageS3Cluster;
+    friend class StorageS3Lambda;
     friend class TableFunctionS3Cluster;
 
     struct ClientAuthentication

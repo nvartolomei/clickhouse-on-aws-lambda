@@ -27,6 +27,23 @@ namespace ErrorCodes
     extern const int DUPLICATED_PART_UUIDS;
 }
 
+
+RemoteQueryExecutor::RemoteQueryExecutor(
+    const LambdaConnectionSettings & connection_,
+    const String & query_, const Block & header_, ContextPtr context_,
+    const Scalars & scalars_, const Tables & external_tables_,
+    QueryProcessingStage::Enum stage_)
+    : header(header_), query(query_), context(context_)
+    , scalars(scalars_), external_tables(external_tables_), stage(stage_)
+{
+    create_connections = [&connection_]()
+    {
+        /// For now connections is mostly a placeholder,
+        /// create a copy.
+        return std::make_unique<LambdaConnections>(connection_);
+    };
+}
+
 RemoteQueryExecutor::RemoteQueryExecutor(
     Connection & connection,
     const String & query_, const Block & header_, ContextPtr context_,

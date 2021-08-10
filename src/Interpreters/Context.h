@@ -314,6 +314,9 @@ public:
 
     ~Context();
 
+    String getAwsLambdaFunctionName() const;
+    void setAwsLambdaFunctionName(const String & name);
+
     String getPath() const;
     String getFlagsPath() const;
     String getUserFilesPath() const;

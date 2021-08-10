@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Client/LambdaConnections.h>
 #include <Client/ConnectionPool.h>
 #include <Client/IConnections.h>
 #include <Client/ConnectionPoolWithFailover.h>
@@ -34,6 +35,12 @@ class RemoteQueryExecutor
 {
 public:
     using ReadContext = RemoteQueryExecutorReadContext;
+
+    RemoteQueryExecutor(
+        const LambdaConnectionSettings & connections,
+        const String & query_, const Block & header_, ContextPtr context_,
+        const Scalars & scalars_ = Scalars(), const Tables & external_tables_ = Tables(),
+        QueryProcessingStage::Enum stage_ = QueryProcessingStage::Complete);
 
     /// Takes already set connection.
     RemoteQueryExecutor(

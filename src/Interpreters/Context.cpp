@@ -302,6 +302,8 @@ struct ContextSharedPart
 {
     Poco::Logger * log = &Poco::Logger::get("Context");
 
+    String aws_lambda_function_name;
+
     /// For access of most of shared objects. Recursive mutex.
     mutable std::recursive_mutex mutex;
     /// Separate mutex for access of dictionaries. Separate mutex to avoid locks when server doing request to itself.
@@ -639,6 +641,16 @@ VolumePtr Context::getTemporaryVolume() const
 {
     auto lock = getLock();
     return shared->tmp_volume;
+}
+
+String Context::getAwsLambdaFunctionName() const
+{
+    return shared->aws_lambda_function_name;
+}
+
+void Context::setAwsLambdaFunctionName(const String & name)
+{
+    shared->aws_lambda_function_name = name;
 }
 
 void Context::setPath(const String & path)

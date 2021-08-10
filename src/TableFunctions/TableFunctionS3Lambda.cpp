@@ -4,6 +4,7 @@
 
 #include <IO/S3Common.h>
 #include <Storages/StorageS3.h>
+#include <Storages/StorageS3Lambda.h>
 #include <Interpreters/evaluateConstantExpression.h>
 #include <Interpreters/Context.h>
 #include <TableFunctions/TableFunctionFactory.h>
@@ -19,6 +20,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
+    extern const int LIMIT_EXCEEDED;
 }
 
 void TableFunctionS3Lambda::parseArguments(const ASTPtr & ast_function, ContextPtr context)
@@ -78,22 +80,46 @@ StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, C
     UInt64 min_upload_part_size = context->getSettingsRef().s3_min_upload_part_size;
     UInt64 max_single_part_upload_size = context->getSettingsRef().s3_max_single_part_upload_size;
     UInt64 max_connections = context->getSettingsRef().s3_max_connections;
+    UInt64 lambda_parallelism = context->getSettingsRef().s3_lambda_par;
 
-    StoragePtr storage = StorageS3::create(
-        s3_uri,
-        access_key_id,
-        secret_access_key,
-        StorageID(getDatabaseName(), table_name),
-        format,
-        max_single_read_retries,
-        min_upload_part_size,
-        max_single_part_upload_size,
-        max_connections,
-        getActualTableStructure(context),
-        ConstraintsDescription{},
-        String{},
-        context,
-        compression_method);
+    if (lambda_parallelism > 512)
+        throw new Exception("Can't use a parallelism higher than 512. Safety limit.", ErrorCodes::LIMIT_EXCEEDED);
+
+    StoragePtr storage;
+
+    if (lambda_parallelism == 1 || context->getClientInfo().query_kind == ClientInfo::QueryKind::SECONDARY_QUERY)
+    {
+         storage = StorageS3::create(
+            s3_uri,
+            access_key_id,
+            secret_access_key,
+            StorageID(getDatabaseName(), table_name),
+            format,
+            max_single_read_retries,
+            min_upload_part_size,
+            max_single_part_upload_size,
+            max_connections,
+            getActualTableStructure(context),
+            ConstraintsDescription{},
+            String{},
+            context,
+            compression_method);
+    }
+    else
+    {
+        StorageS3Lambda::create(
+            filename,
+            access_key_id,
+            secret_access_key,
+            StorageID(getDatabaseName(), table_name),
+            format,
+            max_connections,
+            lambda_parallelism,
+            getActualTableStructure(context),
+            ConstraintsDescription{},
+            context,
+            compression_method);
+    }
 
     storage->startup();
 
