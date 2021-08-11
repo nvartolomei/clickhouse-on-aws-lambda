@@ -3,13 +3,14 @@
 //
 
 #include "Runtime.h"
-
 #include <iostream>
 #include <AggregateFunctions/registerAggregateFunctions.h>
 #include <Databases/DatabaseMemory.h>
 #include <Formats/FormatFactory.h>
 #include <Formats/registerFormats.h>
 #include <Functions/registerFunctions.h>
+#include <IO/ReadBufferFromFileDescriptor.h>
+#include <IO/WriteBufferFromFileDescriptorDiscardOnFailure.h>
 #include <IO/WriteBufferFromOStream.h>
 #include <Interpreters/executeQuery.h>
 #include <Processors/Formats/IOutputFormat.h>
@@ -25,7 +26,11 @@
 #include <aws/lambda-runtime/runtime.h>
 #include <Poco/ConsoleChannel.h>
 #include <Poco/JSON/Parser.h>
+#include <Common/PipeFDs.h>
 #include <common/DateLUT.h>
+#include <common/ErrorHandlers.h>
+#include <common/sleep.h>
+#include <daemon/BaseDaemon.h>
 
 std::function<std::shared_ptr<Aws::Utils::Logging::LogSystemInterface>()> GetConsoleLoggerFactory()
 {
@@ -196,8 +201,275 @@ std::string Runtime::handleRequest(std::string const & input)
 
     abort();
 }
+
+
+static void blockSignals(const std::vector<int> & signals)
+{
+    sigset_t sig_set;
+
+#if defined(OS_DARWIN)
+    sigemptyset(&sig_set);
+    for (auto signal : signals)
+        sigaddset(&sig_set, signal);
+#else
+    if (sigemptyset(&sig_set))
+        throw Poco::Exception("Cannot block signal.");
+
+    for (auto signal : signals)
+        if (sigaddset(&sig_set, signal))
+            throw Poco::Exception("Cannot block signal.");
+#endif
+
+    if (pthread_sigmask(SIG_BLOCK, &sig_set, nullptr))
+        throw Poco::Exception("Cannot block signal.");
+};
+
+using signal_function = void(int, siginfo_t*, void*);
+static void addSignalHandler(const std::vector<int> & signals, signal_function handler, std::vector<int> * out_handled_signals)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = handler;
+    sa.sa_flags = SA_SIGINFO;
+
+#if defined(OS_DARWIN)
+    sigemptyset(&sa.sa_mask);
+    for (auto signal : signals)
+        sigaddset(&sa.sa_mask, signal);
+#else
+    if (sigemptyset(&sa.sa_mask))
+        throw Poco::Exception("Cannot set signal handler.");
+
+    for (auto signal : signals)
+        if (sigaddset(&sa.sa_mask, signal))
+            throw Poco::Exception("Cannot set signal handler.");
+#endif
+
+    for (auto signal : signals)
+        if (sigaction(signal, &sa, nullptr))
+            throw Poco::Exception("Cannot set signal handler.");
+
+    if (out_handled_signals)
+        std::copy(signals.begin(), signals.end(), std::back_inserter(*out_handled_signals));
+};
+
+
+static constexpr size_t max_query_id_size = 127;
+
+static const size_t signal_pipe_buf_size =
+    sizeof(int)
+    + sizeof(siginfo_t)
+    + sizeof(ucontext_t)
+    + sizeof(StackTrace)
+    + sizeof(UInt32)
+    + max_query_id_size + 1    /// query_id + varint encoded length
+    + sizeof(void*);
+
+DB::PipeFDs signal_pipe;
+
+static void call_default_signal_handler(int sig)
+{
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/** Handler for "fault" or diagnostic signals. Send data about fault to separate thread to write into log.
+  */
+static void signalHandler(int sig, siginfo_t * info, void * context)
+{
+    DENY_ALLOCATIONS_IN_SCOPE;
+    auto saved_errno = errno;   /// We must restore previous value of errno in signal handler.
+
+    char buf[signal_pipe_buf_size];
+    DB::WriteBufferFromFileDescriptorDiscardOnFailure out(signal_pipe.fds_rw[1], signal_pipe_buf_size, buf);
+
+    const ucontext_t signal_context = *reinterpret_cast<ucontext_t *>(context);
+    const StackTrace stack_trace(signal_context);
+
+    StringRef query_id = DB::CurrentThread::getQueryId();   /// This is signal safe.
+    query_id.size = std::min(query_id.size, max_query_id_size);
+
+    DB::writeBinary(sig, out);
+    DB::writePODBinary(*info, out);
+    DB::writePODBinary(signal_context, out);
+    DB::writePODBinary(stack_trace, out);
+    DB::writeBinary(UInt32(getThreadId()), out);
+    DB::writeStringBinary(query_id, out);
+    DB::writePODBinary(DB::current_thread, out);
+
+    out.next();
+
+    if (sig != SIGTSTP) /// This signal is used for debugging.
+    {
+        /// The time that is usually enough for separate thread to print info into log.
+        sleepForSeconds(1);  /// FIXME: use some feedback from threads that process stacktrace
+        call_default_signal_handler(sig);
+    }
+
+    errno = saved_errno;
+}
+
+class SignalListener : public Poco::Runnable
+{
+public:
+    explicit SignalListener()
+        : log(&Poco::Logger::get("BaseDaemon"))
+    {
+    }
+private:
+    Poco::Logger * log;
+public:
+    enum Signals : int
+    {
+        StdTerminate = -1,
+        StopThread = -2,
+    };
+
+    void run() override
+    {
+        char buf[signal_pipe_buf_size];
+        DB::ReadBufferFromFileDescriptor in(signal_pipe.fds_rw[0], signal_pipe_buf_size, buf);
+
+        while (!in.eof())
+        {
+            int sig = 0;
+            DB::readBinary(sig, in);
+
+            if (sig == Signals::StopThread)
+            {
+                break;
+            }
+            else
+            {
+                siginfo_t info{};
+                ucontext_t context{};
+                StackTrace stack_trace(NoCapture{});
+                UInt32 thread_num{};
+                std::string query_id;
+                DB::ThreadStatus * thread_ptr{};
+
+                // if (sig != SanitizerTrap)
+                // {
+                    DB::readPODBinary(info, in);
+                    DB::readPODBinary(context, in);
+                // }
+
+                DB::readPODBinary(stack_trace, in);
+                DB::readBinary(thread_num, in);
+                DB::readBinary(query_id, in);
+                DB::readPODBinary(thread_ptr, in);
+
+                /// This allows to receive more signals if failure happens inside onFault function.
+                /// Example: segfault while symbolizing stack trace.
+                std::thread([=, this] { onFault(sig, info, context, stack_trace, thread_num, query_id, thread_ptr); }).detach();
+            }
+        }
+    }
+
+    void onFault(
+        int sig,
+        const siginfo_t & info,
+        const ucontext_t & context,
+        const StackTrace & stack_trace,
+        UInt32 thread_num,
+        const std::string & query_id,
+        DB::ThreadStatus * thread_ptr) const
+    {
+        DB::ThreadStatus thread_status;
+
+        /// Send logs from this thread to client if possible.
+        /// It will allow client to see failure messages directly.
+        if (thread_ptr)
+        {
+            if (auto logs_queue = thread_ptr->getInternalTextLogsQueue())
+                DB::CurrentThread::attachInternalTextLogsQueue(logs_queue, DB::LogsLevel::trace);
+        }
+
+        LOG_FATAL(log, "########################################");
+
+        if (query_id.empty())
+        {
+            LOG_FATAL(log, "(from thread {}) (no query) Received signal {} ({})",
+                      thread_num, strsignal(sig), sig);
+        }
+        else
+        {
+            LOG_FATAL(log, "(from thread {}) (query_id: {}) Received signal {} ({})",
+                      thread_num, query_id, strsignal(sig), sig);
+        }
+
+        String error_message;
+
+        // if (sig != SanitizerTrap)
+            error_message = signalToErrorMessage(sig, info, context);
+        // else
+        //     error_message = "Sanitizer trap.";
+
+        LOG_FATAL(log, error_message);
+
+        if (stack_trace.getSize())
+        {
+            /// Write bare stack trace (addresses) just in case if we will fail to print symbolized stack trace.
+            /// NOTE: This still require memory allocations and mutex lock inside logger.
+            ///       BTW we can also print it to stderr using write syscalls.
+
+            std::stringstream bare_stacktrace;
+            bare_stacktrace << "Stack trace:";
+            for (size_t i = stack_trace.getOffset(); i < stack_trace.getSize(); ++i)
+                bare_stacktrace << ' ' << stack_trace.getFramePointers()[i];
+
+            LOG_FATAL(log, bare_stacktrace.str());
+        }
+
+        /// Write symbolized stack trace line by line for better grep-ability.
+        stack_trace.toStringEveryLine([&](const std::string & s) { LOG_FATAL(log, s); });
+
+        /// When everything is done, we will try to send these error messages to client.
+        if (thread_ptr)
+            thread_ptr->onFatalError();
+    }
+};
+
 void Runtime::initializeTerminationAndSignalProcessing()
 {
     std::set_terminate(terminate_handler);
+
+    blockSignals({SIGPIPE});
+    addSignalHandler({SIGABRT, SIGSEGV, SIGILL}, signalHandler, nullptr);
+
+    /// Set up Poco ErrorHandler for Poco Threads.
+    static KillingErrorHandler killing_error_handler;
+    Poco::ErrorHandler::set(&killing_error_handler);
+
+    signal_pipe.setNonBlockingWrite();
+    signal_pipe.tryIncreaseSize(1 << 20);
+
+    signal_listener = std::make_unique<SignalListener>();
+    signal_listener_thread.start(*signal_listener);
+}
+
+
+static void writeSignalIDtoSignalPipe(int sig)
+{
+    auto saved_errno = errno;   /// We must restore previous value of errno in signal handler.
+
+    char buf[signal_pipe_buf_size];
+    DB::WriteBufferFromFileDescriptor out(signal_pipe.fds_rw[1], signal_pipe_buf_size, buf);
+    DB::writeBinary(sig, out);
+    out.next();
+
+    errno = saved_errno;
+}
+
+Runtime::~Runtime()
+{
+    writeSignalIDtoSignalPipe(SignalListener::StopThread);
+    signal_listener_thread.join();
+    /// Reset signals to SIG_DFL to avoid trying to write to the signal_pipe that will be closed after.
+    for (int sig : {SIGABRT, SIGSEGV, SIGILL})
+    {
+        signal(sig, SIG_DFL);
+    }
+    signal_pipe.close();
 }
 }

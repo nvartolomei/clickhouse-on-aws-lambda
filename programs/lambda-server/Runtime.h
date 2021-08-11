@@ -17,7 +17,12 @@ public:
     int main(const std::vector<std::string> &) override;
     std::string handleRequest(std::string const& input);
 
+    ~Runtime() override;
+
 private:
+    Poco::Thread signal_listener_thread;
+    std::unique_ptr<Poco::Runnable> signal_listener;
     void initializeTerminationAndSignalProcessing();
 };
+
 }
