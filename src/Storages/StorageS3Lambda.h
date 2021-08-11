@@ -52,7 +52,6 @@ private:
     StorageS3::ClientAuthentication client_auth;
 
     String filename;
-    String cluster_name;
     String format_name;
     UInt64 lambda_parallelism;
     String compression_method;

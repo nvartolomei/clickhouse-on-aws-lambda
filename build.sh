@@ -59,7 +59,7 @@ run_cmake() {
       -DENABLE_TESTS=0 \
       -DENABLE_UTILS=0 \
       -DENABLE_EMBEDDED_COMPILER=0 \
-      -DUSE_UNWIND=0 \
+      -DUSE_UNWIND=1 \
       -DENABLE_REPLXX=0 \
       -DENABLE_SSL=1 \
       -DENABLE_CURL=1 \

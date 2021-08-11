@@ -83,7 +83,10 @@ StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, C
     UInt64 lambda_parallelism = context->getSettingsRef().s3_lambda_par;
 
     if (lambda_parallelism > 512)
-        throw new Exception("Can't use a parallelism higher than 512. Safety limit.", ErrorCodes::LIMIT_EXCEEDED);
+        throw Exception("Can't use a parallelism higher than 512. Safety limit.", ErrorCodes::LIMIT_EXCEEDED);
+
+    if (lambda_parallelism == 0)
+        lambda_parallelism = 2;
 
     StoragePtr storage;
 
@@ -107,7 +110,7 @@ StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, C
     }
     else
     {
-        StorageS3Lambda::create(
+        storage = StorageS3Lambda::create(
             filename,
             access_key_id,
             secret_access_key,

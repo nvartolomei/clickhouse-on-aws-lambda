@@ -16,5 +16,8 @@ class Runtime : public Poco::Util::ServerApplication
 public:
     int main(const std::vector<std::string> &) override;
     std::string handleRequest(std::string const& input);
+
+private:
+    void initializeTerminationAndSignalProcessing();
 };
 }

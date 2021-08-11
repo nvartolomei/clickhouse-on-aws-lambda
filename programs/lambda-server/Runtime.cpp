@@ -37,6 +37,8 @@ namespace DB
 {
 int Runtime::main(const std::vector<std::string> & args)
 {
+    initializeTerminationAndSignalProcessing();
+
     logger().root().setChannel(new Poco::ConsoleChannel);
     logger().root().setLevel(Poco::Message::PRIO_TRACE);
 
@@ -90,6 +92,8 @@ int Runtime::main(const std::vector<std::string> & args)
             }
             catch (...)
             {
+                tryLogCurrentException(&logger());
+
                 std::string error_msg = "Failed to execute query: " + getCurrentExceptionMessage(false, false, false);
                 return aws::lambda_runtime::invocation_response::failure(
                     error_msg, "Internal Server Error");
@@ -151,5 +155,49 @@ std::string Runtime::handleRequest(std::string const & input)
     executor->execute(pipeline.getNumThreads());
 
     return result.str();
+}
+
+/** To use with std::set_terminate.
+  * Collects slightly more info than __gnu_cxx::__verbose_terminate_handler,
+  *  and send it to pipe. Other thread will read this info from pipe and asynchronously write it to log.
+  * Look at libstdc++-v3/libsupc++/vterminate.cc for example.
+  */
+[[noreturn]] static void terminate_handler()
+{
+    static thread_local bool terminating = false;
+    if (terminating)
+        abort();
+
+    terminating = true;
+
+    std::string log_message;
+
+    if (std::current_exception())
+        log_message = "Terminate called for uncaught exception:\n" + DB::getCurrentExceptionMessage(true);
+    else
+        log_message = "Terminate called without an active exception";
+
+    std::cerr << log_message << std::endl;
+
+    /// POSIX.1 says that write(2)s of less than PIPE_BUF bytes must be atomic - man 7 pipe
+    /// And the buffer should not be too small because our exception messages can be large.
+    // static constexpr size_t buf_size = PIPE_BUF;
+    //
+    // if (log_message.size() > buf_size - 16)
+    //     log_message.resize(buf_size - 16);
+    //
+    // char buf[buf_size];
+    // DB::WriteBufferFromFileDescriptor out(signal_pipe.fds_rw[1], buf_size, buf);
+    //
+    // DB::writeBinary(static_cast<int>(SignalListener::StdTerminate), out);
+    // DB::writeBinary(UInt32(getThreadId()), out);
+    // DB::writeBinary(log_message, out);
+    // out.next();
+
+    abort();
+}
+void Runtime::initializeTerminationAndSignalProcessing()
+{
+    std::set_terminate(terminate_handler);
 }
 }

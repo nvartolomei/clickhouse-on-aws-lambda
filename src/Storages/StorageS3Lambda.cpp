@@ -81,6 +81,7 @@ StorageS3Lambda::StorageS3Lambda(
     storage_metadata.setColumns(columns_);
     storage_metadata.setConstraints(constraints_);
     setInMemoryMetadata(storage_metadata);
+
     StorageS3::updateClientAndAuthSettings(context_, client_auth);
 }
 
@@ -94,9 +95,6 @@ Pipe StorageS3Lambda::read(
     size_t /*max_block_size*/,
     unsigned /*num_streams*/)
 {
-    StorageS3::updateClientAndAuthSettings(context, client_auth);
-
-    auto cluster = context->getCluster(cluster_name)->getClusterWithReplicasAsShards(context->getSettings());
     S3::URI s3_uri(Poco::URI{filename});
     StorageS3::updateClientAndAuthSettings(context, client_auth);
 
@@ -104,7 +102,7 @@ Pipe StorageS3Lambda::read(
 
     /// Collect all files and then shard them across lambda instances.
     Strings files;
-    for (String file = iterator->next(); !file.empty(); iterator->next())
+    for (String file = iterator->next(); !file.empty(); file = iterator->next())
     {
         files.emplace_back(file);
     }
@@ -112,21 +110,24 @@ Pipe StorageS3Lambda::read(
     if (files.size() == 0)
         throw new Exception("No files to read", ErrorCodes::NOT_IMPLEMENTED);
 
+    fmt::print("All files: {}\n", fmt::join(files, ", "));
+
     UInt64 actual_parallelism = std::min<UInt64>(files.size(), lambda_parallelism);
     UInt64 files_per_lambda = files.size() / actual_parallelism;
+    UInt64 files_remainder = files.size() % actual_parallelism;
+
     std::vector<std::vector<std::string>> files_by_lambda;
-    for (UInt64 i = 0; i < actual_parallelism; i++)
+    size_t offset = 0;
+    for (size_t ix = 0; ix < actual_parallelism; ix++)
     {
-        files_by_lambda.emplace_back(files.begin() + i * files_per_lambda, files.begin() + (i+1) * files_per_lambda);
+        size_t sz = files_per_lambda + (files_remainder < ix);
+        files_by_lambda.emplace_back(
+            files.begin() + offset, files.begin() + offset + sz);
+        offset += sz;
     }
 
-    UInt64 pos = 0;
-    for (auto it = files.begin() + (actual_parallelism) * files_per_lambda; it < files.end(); it++) {
-        files_by_lambda[pos].emplace_back(*it);
-
-        if (pos >= files_by_lambda.size())
-            throw new Exception("Logic error in file partitioning.", ErrorCodes::LOGICAL_ERROR);
-    }
+    for (const auto & v : files_by_lambda)
+        fmt::print("Per lambda: {}\n", fmt::join(v, ", "));
 
     /// Calculate the header. This is significant, because some columns could be thrown away in some cases like query with count(*)
     Block header =

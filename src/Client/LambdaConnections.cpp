@@ -59,7 +59,7 @@ Packet LambdaConnections::receivePacketUnlocked(AsyncCallback async_callback)
 }
 void LambdaConnections::disconnect()
 {
-    throw Exception("not implemented", ErrorCodes::NOT_IMPLEMENTED);
+    // throw Exception("not implemented", ErrorCodes::NOT_IMPLEMENTED);
 }
 void LambdaConnections::sendCancel()
 {
