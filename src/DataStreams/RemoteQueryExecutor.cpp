@@ -29,7 +29,7 @@ namespace ErrorCodes
 
 
 RemoteQueryExecutor::RemoteQueryExecutor(
-    const LambdaConnectionSettings & connection_,
+    const LambdaConnectionContext & connection_,
     const String & query_, const Block & header_, ContextPtr context_,
     const Scalars & scalars_, const Tables & external_tables_,
     QueryProcessingStage::Enum stage_)

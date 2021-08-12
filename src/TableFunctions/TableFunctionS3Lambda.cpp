@@ -19,8 +19,8 @@ namespace DB
 
 namespace ErrorCodes
 {
-    extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
-    extern const int LIMIT_EXCEEDED;
+extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
+extern const int LIMIT_EXCEEDED;
 }
 
 void TableFunctionS3Lambda::parseArguments(const ASTPtr & ast_function, ContextPtr context)
@@ -35,7 +35,8 @@ void TableFunctionS3Lambda::parseArguments(const ASTPtr & ast_function, ContextP
         getName());
 
     if (args_func.size() != 1)
-        throw Exception("Table function '" + getName() + "' must have arguments.", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
+        throw Exception("Table function '" + getName() + "' must have arguments.",
+                        ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
 
     ASTs & args = args_func.at(0)->children;
 
@@ -47,10 +48,10 @@ void TableFunctionS3Lambda::parseArguments(const ASTPtr & ast_function, ContextP
 
     /// Size -> argument indexes
     static auto size_to_args = std::map<size_t, std::map<String, size_t>>
-    {
-        {3, {{"format", 1}, {"structure", 2}}},
-        {4, {{"format", 1}, {"structure", 2}, {"compression_method", 3}}},
-    };
+        {
+            {3, {{"format", 1}, {"structure", 2}}},
+            {4, {{"format", 1}, {"structure", 2}, {"compression_method", 3}}},
+        };
 
     /// This argument is always the first
     filename = args[0]->as<ASTLiteral &>().value.safeGet<String>();
@@ -72,10 +73,12 @@ ColumnsDescription TableFunctionS3Lambda::getActualTableStructure(ContextPtr con
     return parseColumnsListFromString(structure, context);
 }
 
-StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, ContextPtr context, const std::string & table_name, ColumnsDescription /*cached_columns*/) const
+StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, ContextPtr context,
+                                              const std::string & table_name,
+                                              ColumnsDescription /*cached_columns*/) const
 {
-    Poco::URI uri (filename);
-    S3::URI s3_uri (uri);
+    Poco::URI uri(filename);
+    S3::URI s3_uri(uri);
     UInt64 max_single_read_retries = context->getSettingsRef().s3_max_single_read_retries;
     UInt64 min_upload_part_size = context->getSettingsRef().s3_min_upload_part_size;
     UInt64 max_single_part_upload_size = context->getSettingsRef().s3_max_single_part_upload_size;
@@ -90,9 +93,28 @@ StoragePtr TableFunctionS3Lambda::executeImpl(const ASTPtr & /*ast_function*/, C
 
     StoragePtr storage;
 
-    if (lambda_parallelism == 1 || context->getClientInfo().query_kind == ClientInfo::QueryKind::SECONDARY_QUERY)
+    if (context->getClientInfo().query_kind == ClientInfo::QueryKind::SECONDARY_QUERY)
     {
-         storage = StorageS3::create(
+        storage = StorageS3::create(
+            s3_uri,
+            access_key_id,
+            secret_access_key,
+            StorageID(getDatabaseName(), table_name),
+            format,
+            max_single_read_retries,
+            min_upload_part_size,
+            max_single_part_upload_size,
+            max_connections,
+            getActualTableStructure(context),
+            ConstraintsDescription{},
+            String{},
+            context,
+            compression_method,
+            /*distributed_processing=*/true);
+    }
+    else if (lambda_parallelism == 1)
+    {
+        storage = StorageS3::create(
             s3_uri,
             access_key_id,
             secret_access_key,

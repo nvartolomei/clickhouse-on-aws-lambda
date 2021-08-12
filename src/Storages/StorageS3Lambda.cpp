@@ -1,4 +1,4 @@
-#include "Storages/StorageS3Lambda.h"
+#include <Storages/StorageS3Lambda.h>
 
 #if !defined(ARCADIA_BUILD)
 #include <Common/config.h>
@@ -6,33 +6,19 @@
 
 #if USE_AWS_S3
 
-#include "Common/Exception.h"
-#include <Common/Throttler.h>
-#include "Client/Connection.h"
-#include "Client/LambdaConnections.h"
-#include "Core/QueryProcessingStage.h"
+#include <Common/Exception.h>
+#include <Client/LambdaConnections.h>
+#include <Core/QueryProcessingStage.h>
 #include <Core/UUID.h>
-#include "DataStreams/RemoteBlockInputStream.h"
-#include <Columns/ColumnsNumber.h>
-#include <DataTypes/DataTypesNumber.h>
+#include <DataStreams/RemoteBlockInputStream.h>
 #include <DataTypes/DataTypeString.h>
-#include <IO/ReadBufferFromS3.h>
-#include <IO/ReadHelpers.h>
-#include <IO/WriteBufferFromS3.h>
-#include <IO/WriteHelpers.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/getHeaderForProcessingStage.h>
 #include <Interpreters/SelectQueryOptions.h>
 #include <Interpreters/InterpreterSelectQuery.h>
 #include <Interpreters/getTableExpressions.h>
-#include <Formats/FormatFactory.h>
-#include <DataStreams/IBlockOutputStream.h>
 #include <DataStreams/AddingDefaultsBlockInputStream.h>
-#include <DataStreams/narrowBlockInputStreams.h>
-#include <Processors/Formats/InputStreamFromInputFormat.h>
 #include <Processors/Pipe.h>
-#include <Processors/Sources/SourceFromInputStream.h>
-#include "Processors/Sources/SourceWithProgress.h"
 #include <Processors/Sources/RemoteSource.h>
 #include <Parsers/queryToString.h>
 #include <Parsers/ASTTablesInSelectQuery.h>
@@ -44,10 +30,8 @@
 #include <aws/s3/S3Client.h>
 #include <aws/s3/model/ListObjectsV2Request.h>
 
-#include <ios>
 #include <memory>
 #include <string>
-#include <thread>
 #include <cassert>
 
 namespace DB
@@ -55,7 +39,7 @@ namespace DB
 
 namespace ErrorCodes
 {
-    extern const int NOT_IMPLEMENTED;
+extern const int NOT_IMPLEMENTED;
 }
 
 StorageS3Lambda::StorageS3Lambda(
@@ -70,12 +54,10 @@ StorageS3Lambda::StorageS3Lambda(
     const ConstraintsDescription & constraints_,
     ContextPtr context_,
     const String & compression_method_)
-    : IStorage(table_id_)
-    , client_auth{S3::URI{Poco::URI{filename_}}, access_key_id_, secret_access_key_, max_connections_, {}, {}}
-    , filename(filename_)
-    , format_name(format_name_)
-    , lambda_parallelism(lambda_parallelism_)
-    , compression_method(compression_method_)
+    : IStorage(table_id_),
+      client_auth{S3::URI{Poco::URI{filename_}}, access_key_id_, secret_access_key_, max_connections_, {}, {}},
+      filename(filename_), format_name(format_name_), lambda_parallelism(lambda_parallelism_),
+      compression_method(compression_method_)
 {
     StorageInMemoryMetadata storage_metadata;
     storage_metadata.setColumns(columns_);
@@ -131,22 +113,24 @@ Pipe StorageS3Lambda::read(
 
     /// Calculate the header. This is significant, because some columns could be thrown away in some cases like query with count(*)
     Block header =
-        InterpreterSelectQuery(query_info.query, context, SelectQueryOptions(processed_stage).analyze()).getSampleBlock();
+        InterpreterSelectQuery(query_info.query, context,
+                               SelectQueryOptions(processed_stage).analyze()).getSampleBlock();
 
     const Scalars & scalars = context->hasQueryContext() ? context->getQueryContext()->getScalars() : Scalars{};
 
     const bool add_agg_info = processed_stage == QueryProcessingStage::WithMergeableState;
 
     Pipes pipes;
-    for (UInt64 lambda_idx = 0; lambda_idx < actual_parallelism; lambda_idx++)
+    for (UInt64 lambda_ix = 0; lambda_ix < actual_parallelism; lambda_ix++)
     {
-        const LambdaConnectionSettings connection {
+        const LambdaConnectionContext connection{
             .function_name = context->getAwsLambdaFunctionName(),
+            .tasks = files_by_lambda[lambda_ix],
         };
 
         auto remote_query_executor = std::make_shared<RemoteQueryExecutor>(
-                connection, queryToString(query_info.query), header, context,
-                scalars, Tables(), processed_stage);
+            connection, queryToString(query_info.query), header, context,
+            scalars, Tables(), processed_stage);
 
         pipes.emplace_back(std::make_shared<RemoteSource>(remote_query_executor, add_agg_info, false));
     }

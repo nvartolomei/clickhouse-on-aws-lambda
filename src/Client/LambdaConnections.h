@@ -5,22 +5,41 @@
 #pragma once
 
 #include <Client/IConnections.h>
+#include <Interpreters/ClientInfo.h>
 
 namespace DB
 {
-struct LambdaConnectionSettings {
+struct LambdaConnectionContext
+{
     const String function_name;
+    const Strings tasks;
 };
 
 class LambdaConnections final : public IConnections
 {
 private:
-    LambdaConnectionSettings settings;
+    Poco::Logger *log;
+
+    LambdaConnectionContext lambda_connection_context;
+
+    mutable std::mutex state_mutex;
+    bool cancelled = false;
+    bool active_query = false;
+    bool table_structure_done = false;
+    bool done = false;
+
+    // query to run
+    ConnectionTimeouts timeouts;
+    String query;
+    String query_id;
+    UInt64 stage;
+    ClientInfo client_info;
 public:
-    LambdaConnections(const LambdaConnectionSettings & settings);
+    explicit LambdaConnections(const LambdaConnectionContext & settings);
 
     void sendScalarsData(Scalars & data) override;
     void sendExternalTablesData(std::vector<ExternalTablesData> & data) override;
+
     void sendQuery(
         const ConnectionTimeouts & timeouts,
         const String & query,
@@ -28,6 +47,7 @@ public:
         UInt64 stage,
         const ClientInfo & client_info,
         bool with_pending_data) override;
+
     void sendReadTaskResponse(const String & string) override;
     Packet receivePacket() override;
     Packet receivePacketUnlocked(AsyncCallback async_callback) override;

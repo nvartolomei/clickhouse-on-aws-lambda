@@ -8,4 +8,4 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM ERR EXIT
 
-docker run -i --rm -p 9021:8080 clickhouse-on-aws-lambda
+docker run -i --rm -v "$HOME/.aws/credentials":/root/.aws/credentials -p 9021:8080 clickhouse-on-aws-lambda

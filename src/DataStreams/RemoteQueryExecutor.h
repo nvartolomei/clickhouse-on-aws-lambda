@@ -37,7 +37,7 @@ public:
     using ReadContext = RemoteQueryExecutorReadContext;
 
     RemoteQueryExecutor(
-        const LambdaConnectionSettings & connections,
+        const LambdaConnectionContext & connections,
         const String & query_, const Block & header_, ContextPtr context_,
         const Scalars & scalars_ = Scalars(), const Tables & external_tables_ = Tables(),
         QueryProcessingStage::Enum stage_ = QueryProcessingStage::Complete);
