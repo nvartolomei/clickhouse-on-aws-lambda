@@ -67,49 +67,48 @@ int Runtime::main(const std::vector<std::string> & args)
 
     global_context->setProgressCallback([](const Progress &) {});
 
+    DateLUT::instance();
+
     auto & database_catalog = DatabaseCatalog::instance();
     auto system_database = std::make_shared<DatabaseMemory>(DatabaseCatalog::SYSTEM_DATABASE, global_context);
     database_catalog.attachDatabase(DatabaseCatalog::SYSTEM_DATABASE, system_database);
     attach<StorageSystemOne>(*system_database, "one");
     attach<StorageSystemNumbers>(*system_database, "numbers", false);
 
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-
-    /// Start InitAPI
     Aws::SDKOptions options;
     options.loggingOptions.logLevel = Aws::Utils::Logging::LogLevel::Trace;
     options.loggingOptions.logger_create_fn = GetConsoleLoggerFactory();
     InitAPI(options);
 
-    Aws::Http::InitHttp(); // Used implicitly by AWS Client.
-    /// End InitAPI
-
 
     // Required for invoking distributed query processing.
-    global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
-
     Aws::Client::ClientConfiguration aws_client_config;
-    aws_client_config.region = Aws::Region::EU_WEST_2;
+    aws_client_config.region = Aws::Environment::GetEnv("AWS_REGION");
 
-    auto lambda_client = std::make_shared<Aws::Lambda::LambdaClient>(aws_client_config);
-    global_context->setAwsLambdaClient(lambda_client);
+    global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
+    global_context->setAwsLambdaClient(std::make_shared<Aws::Lambda::LambdaClient>(aws_client_config));
 
-    LOG_TRACE(&logger(), "Testing lambda client.");
-    Aws::Lambda::Model::InvokeRequest invoke_request;
-    invoke_request.SetFunctionName(global_context->getAwsLambdaFunctionName());
-    std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
-    *invoke_payload << R"({"query":"select 'hello from lambda'"})";
-    invoke_request.SetBody(invoke_payload);
+//    LOG_TRACE(&logger(), "Testing lambda client.");
+//    Aws::Lambda::Model::InvokeRequest invoke_request;
+//    invoke_request.SetFunctionName(global_context->getAwsLambdaFunctionName());
+//    std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
+//    *invoke_payload << R"({"query":"select 'hello from lambda'"})";
+//    invoke_request.SetBody(invoke_payload);
+//
+//    auto invoke_outcome = lambda_client->Invoke(invoke_request);
+//
+//    LOG_TRACE(&logger(), "Invoke status code: {}", invoke_outcome.GetResult().GetStatusCode());
+//    if (invoke_outcome.GetResult().GetStatusCode() > 0)
+//    {
+//        std::stringstream invoke_response_ss;
+//        invoke_response_ss << invoke_outcome.GetResult().GetPayload().rdbuf();
+//
+//        LOG_TRACE(&logger(), "Invoke response: {}", invoke_response_ss.str());
+//    }
+//
+//    LOG_TRACE(&logger(), "Invoke error: {}", invoke_outcome.GetError().GetMessage());
 
-    auto invoke_outcome = lambda_client->Invoke(invoke_request);
 
-    LOG_TRACE(&logger(), "Invoke status code: {}", invoke_outcome.GetResult().GetStatusCode());
-    std::stringstream invoke_response_ss;
-    invoke_response_ss << invoke_outcome.GetResult().GetPayload().rdbuf();
-
-    LOG_TRACE(&logger(), "Invoke response: {}", invoke_response_ss.str());
-
-    DateLUT::instance();
 
     if (args.size() == 1 && args[0] == "local")
     {
