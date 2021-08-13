@@ -23,7 +23,9 @@
 #include <aws/core/auth/AWSCredentialsProvider.h>
 #include <aws/core/platform/Environment.h>
 #include <aws/core/utils/logging/ConsoleLogSystem.h>
+#include <aws/lambda/model/InvokeRequest.h>
 #include <aws/lambda-runtime/runtime.h>
+#include <aws/lambda/LambdaClient.h>
 #include <Poco/ConsoleChannel.h>
 #include <Poco/JSON/Parser.h>
 #include <Common/PipeFDs.h>
@@ -34,7 +36,11 @@
 
 std::function<std::shared_ptr<Aws::Utils::Logging::LogSystemInterface>()> GetConsoleLoggerFactory()
 {
-    return [] { return Aws::MakeShared<Aws::Utils::Logging::ConsoleLogSystem>("console_logger", Aws::Utils::Logging::LogLevel::Trace); };
+    return []
+    {
+        return Aws::MakeShared<Aws::Utils::Logging::ConsoleLogSystem>("console_logger",
+                                                                      Aws::Utils::Logging::LogLevel::Trace);
+    };
 }
 
 
@@ -46,6 +52,7 @@ int Runtime::main(const std::vector<std::string> & args)
 
     logger().root().setChannel(new Poco::ConsoleChannel);
     logger().root().setLevel(Poco::Message::PRIO_TRACE);
+    logger().setLevel(Poco::Message::PRIO_TRACE);
 
     registerFunctions();
     registerAggregateFunctions();
@@ -60,16 +67,49 @@ int Runtime::main(const std::vector<std::string> & args)
 
     global_context->setProgressCallback([](const Progress &) {});
 
-    // Required for invoking distributed query processing.
-    global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
-
-    DateLUT::instance();
-
     auto & database_catalog = DatabaseCatalog::instance();
     auto system_database = std::make_shared<DatabaseMemory>(DatabaseCatalog::SYSTEM_DATABASE, global_context);
     database_catalog.attachDatabase(DatabaseCatalog::SYSTEM_DATABASE, system_database);
     attach<StorageSystemOne>(*system_database, "one");
     attach<StorageSystemNumbers>(*system_database, "numbers", false);
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    /// Start InitAPI
+    Aws::SDKOptions options;
+    options.loggingOptions.logLevel = Aws::Utils::Logging::LogLevel::Trace;
+    options.loggingOptions.logger_create_fn = GetConsoleLoggerFactory();
+    InitAPI(options);
+
+    Aws::Http::InitHttp(); // Used implicitly by AWS Client.
+    /// End InitAPI
+
+
+    // Required for invoking distributed query processing.
+    global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
+
+    Aws::Client::ClientConfiguration aws_client_config;
+    aws_client_config.region = Aws::Region::EU_WEST_2;
+
+    auto lambda_client = std::make_shared<Aws::Lambda::LambdaClient>(aws_client_config);
+    global_context->setAwsLambdaClient(lambda_client);
+
+    LOG_TRACE(&logger(), "Testing lambda client.");
+    Aws::Lambda::Model::InvokeRequest invoke_request;
+    invoke_request.SetFunctionName(global_context->getAwsLambdaFunctionName());
+    std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
+    *invoke_payload << R"({"query":"select 'hello from lambda'"})";
+    invoke_request.SetBody(invoke_payload);
+
+    auto invoke_outcome = lambda_client->Invoke(invoke_request);
+
+    LOG_TRACE(&logger(), "Invoke status code: {}", invoke_outcome.GetResult().GetStatusCode());
+    std::stringstream invoke_response_ss;
+    invoke_response_ss << invoke_outcome.GetResult().GetPayload().rdbuf();
+
+    LOG_TRACE(&logger(), "Invoke response: {}", invoke_response_ss.str());
+
+    DateLUT::instance();
 
     if (args.size() == 1 && args[0] == "local")
     {
@@ -83,12 +123,9 @@ int Runtime::main(const std::vector<std::string> & args)
         return 0;
     }
 
-    Aws::SDKOptions options;
-    options.loggingOptions.logLevel = Aws::Utils::Logging::LogLevel::Trace;
-    options.loggingOptions.logger_create_fn = GetConsoleLoggerFactory();
-    InitAPI(options);
     {
-        auto handler_fn = [&](aws::lambda_runtime::invocation_request const & req) {
+        auto handler_fn = [&](aws::lambda_runtime::invocation_request const & req)
+        {
             try
             {
                 const auto result = handleRequest(req.payload);
@@ -134,20 +171,23 @@ std::string Runtime::handleRequest(std::string const & input)
 
     if (!pipeline.isCompleted())
     {
-        pipeline.addSimpleTransform([](const Block & header) { return std::make_shared<MaterializingTransform>(header); });
+        pipeline.addSimpleTransform(
+            [](const Block & header) { return std::make_shared<MaterializingTransform>(header); });
 
-        auto out = FormatFactory::instance().getOutputFormatParallelIfPossible("JSON", out_buf, pipeline.getHeader(), context, {}, {});
+        auto out = FormatFactory::instance().getOutputFormatParallelIfPossible("JSON", out_buf, pipeline.getHeader(),
+                                                                               context, {}, {});
         out->setAutoFlush();
 
         /// Save previous progress callback if any. TODO Do it more conveniently.
         auto previous_progress_callback = context->getProgressCallback();
 
         /// NOTE Progress callback takes shared ownership of 'out'.
-        pipeline.setProgressCallback([out, previous_progress_callback](const Progress & progress) {
-            if (previous_progress_callback)
-                previous_progress_callback(progress);
-            out->onProgress(progress);
-        });
+        pipeline.setProgressCallback([out, previous_progress_callback](const Progress & progress)
+                                     {
+                                         if (previous_progress_callback)
+                                             previous_progress_callback(progress);
+                                         out->onProgress(progress);
+                                     });
 
         pipeline.setOutputFormat(std::move(out));
     }
@@ -224,8 +264,10 @@ static void blockSignals(const std::vector<int> & signals)
         throw Poco::Exception("Cannot block signal.");
 };
 
-using signal_function = void(int, siginfo_t*, void*);
-static void addSignalHandler(const std::vector<int> & signals, signal_function handler, std::vector<int> * out_handled_signals)
+using signal_function = void(int, siginfo_t *, void *);
+
+static void addSignalHandler(const std::vector<int> & signals, signal_function handler,
+                             std::vector<int> *out_handled_signals)
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -263,7 +305,7 @@ static const size_t signal_pipe_buf_size =
     + sizeof(StackTrace)
     + sizeof(UInt32)
     + max_query_id_size + 1    /// query_id + varint encoded length
-    + sizeof(void*);
+    + sizeof(void *);
 
 DB::PipeFDs signal_pipe;
 
@@ -275,7 +317,7 @@ static void call_default_signal_handler(int sig)
 
 /** Handler for "fault" or diagnostic signals. Send data about fault to separate thread to write into log.
   */
-static void signalHandler(int sig, siginfo_t * info, void * context)
+static void signalHandler(int sig, siginfo_t *info, void *context)
 {
     DENY_ALLOCATIONS_IN_SCOPE;
     auto saved_errno = errno;   /// We must restore previous value of errno in signal handler.
@@ -316,8 +358,9 @@ public:
         : log(&Poco::Logger::get("BaseDaemon"))
     {
     }
+
 private:
-    Poco::Logger * log;
+    Poco::Logger *log;
 public:
     enum Signals : int
     {
@@ -346,12 +389,12 @@ public:
                 StackTrace stack_trace(NoCapture{});
                 UInt32 thread_num{};
                 std::string query_id;
-                DB::ThreadStatus * thread_ptr{};
+                DB::ThreadStatus *thread_ptr{};
 
                 // if (sig != SanitizerTrap)
                 // {
-                    DB::readPODBinary(info, in);
-                    DB::readPODBinary(context, in);
+                DB::readPODBinary(info, in);
+                DB::readPODBinary(context, in);
                 // }
 
                 DB::readPODBinary(stack_trace, in);
@@ -361,7 +404,8 @@ public:
 
                 /// This allows to receive more signals if failure happens inside onFault function.
                 /// Example: segfault while symbolizing stack trace.
-                std::thread([=, this] { onFault(sig, info, context, stack_trace, thread_num, query_id, thread_ptr); }).detach();
+                std::thread(
+                    [=, this] { onFault(sig, info, context, stack_trace, thread_num, query_id, thread_ptr); }).detach();
             }
         }
     }
@@ -373,7 +417,7 @@ public:
         const StackTrace & stack_trace,
         UInt32 thread_num,
         const std::string & query_id,
-        DB::ThreadStatus * thread_ptr) const
+        DB::ThreadStatus *thread_ptr) const
     {
         DB::ThreadStatus thread_status;
 
@@ -401,7 +445,7 @@ public:
         String error_message;
 
         // if (sig != SanitizerTrap)
-            error_message = signalToErrorMessage(sig, info, context);
+        error_message = signalToErrorMessage(sig, info, context);
         // else
         //     error_message = "Sanitizer trap.";
 

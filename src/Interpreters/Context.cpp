@@ -303,6 +303,7 @@ struct ContextSharedPart
     Poco::Logger * log = &Poco::Logger::get("Context");
 
     String aws_lambda_function_name;
+    std::shared_ptr<Aws::Lambda::LambdaClient> aws_lambda_client;
 
     /// For access of most of shared objects. Recursive mutex.
     mutable std::recursive_mutex mutex;
@@ -651,6 +652,16 @@ String Context::getAwsLambdaFunctionName() const
 void Context::setAwsLambdaFunctionName(const String & name)
 {
     shared->aws_lambda_function_name = name;
+}
+
+std::shared_ptr<Aws::Lambda::LambdaClient> Context::getAwsLambdaClient() const
+{
+    return shared->aws_lambda_client;
+}
+
+void Context::setAwsLambdaClient(const std::shared_ptr<Aws::Lambda::LambdaClient> & client)
+{
+    shared->aws_lambda_client = client;
 }
 
 void Context::setPath(const String & path)

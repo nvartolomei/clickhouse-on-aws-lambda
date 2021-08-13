@@ -1,4 +1,6 @@
 SET(AWS_S3_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws/aws-cpp-sdk-s3")
+SET(AWS_LAMBDA_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws/aws-cpp-sdk-lambda")
+
 SET(AWS_CORE_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws/aws-cpp-sdk-core")
 SET(AWS_CHECKSUMS_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws-checksums")
 SET(AWS_COMMON_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws-c-common")
@@ -49,6 +51,14 @@ file(GLOB AWS_S3_MODEL_SOURCES
     "${AWS_S3_LIBRARY_DIR}/source/model/*.cpp"
 )
 
+file(GLOB AWS_LAMBDA_SOURCES
+    "${AWS_LAMBDA_LIBRARY_DIR}/source/*.cpp"
+)
+
+file(GLOB AWS_LAMBDA_MODEL_SOURCES
+    "${AWS_LAMBDA_LIBRARY_DIR}/source/model/*.cpp"
+)
+
 file(GLOB AWS_EVENT_STREAM_SOURCES
     "${AWS_EVENT_STREAM_LIBRARY_DIR}/source/*.c"
 )
@@ -69,6 +79,8 @@ file(GLOB S3_UNIFIED_SRC
     ${AWS_COMMON_SOURCES}
     ${AWS_S3_SOURCES}
     ${AWS_S3_MODEL_SOURCES}
+    ${AWS_LAMBDA_SOURCES}
+    ${AWS_LAMBDA_MODEL_SOURCES}
     ${AWS_CORE_SOURCES}
 )
 
@@ -76,6 +88,7 @@ set(S3_INCLUDES
     "${AWS_COMMON_LIBRARY_DIR}/include/"
     "${AWS_EVENT_STREAM_LIBRARY_DIR}/include/"
     "${AWS_S3_LIBRARY_DIR}/include/"
+    "${AWS_LAMBDA_LIBRARY_DIR}/include/"
     "${AWS_CORE_LIBRARY_DIR}/include/"
     "${CMAKE_CURRENT_BINARY_DIR}/include/"
 )
@@ -90,6 +103,8 @@ set_property(TARGET aws_s3_checksums PROPERTY C_STANDARD 99)
 
 add_library(aws_s3 ${S3_UNIFIED_SRC})
 
+target_compile_definitions(aws_s3 PUBLIC "ENABLE_CURL_CLIENT=1")
+
 target_compile_definitions(aws_s3 PUBLIC "AWS_SDK_VERSION_MAJOR=1")
 target_compile_definitions(aws_s3 PUBLIC "AWS_SDK_VERSION_MINOR=7")
 target_compile_definitions(aws_s3 PUBLIC "AWS_SDK_VERSION_PATCH=231")
@@ -100,4 +115,5 @@ if (OPENSSL_FOUND)
     target_link_libraries(aws_s3 PRIVATE ${OPENSSL_LIBRARIES})
 endif()
 
+target_link_libraries(aws_s3 PRIVATE ${CURL_LIBRARY})
 target_link_libraries(aws_s3 PRIVATE aws_s3_checksums)

@@ -34,6 +34,7 @@
 namespace Poco::Net { class IPAddress; }
 namespace zkutil { class ZooKeeper; }
 
+namespace Aws { namespace Lambda { class LambdaClient; } }
 
 namespace DB
 {
@@ -316,6 +317,9 @@ public:
 
     String getAwsLambdaFunctionName() const;
     void setAwsLambdaFunctionName(const String & name);
+
+    std::shared_ptr<Aws::Lambda::LambdaClient> getAwsLambdaClient() const;
+    void setAwsLambdaClient(const std::shared_ptr<Aws::Lambda::LambdaClient> & client);
 
     String getPath() const;
     String getFlagsPath() const;
