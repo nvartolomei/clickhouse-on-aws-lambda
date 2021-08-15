@@ -29,6 +29,7 @@
 #include <Poco/ConsoleChannel.h>
 #include <Poco/Base64Encoder.h>
 #include <Poco/JSON/Parser.h>
+#include <Poco/JSON/Object.h>
 #include <Common/PipeFDs.h>
 #include <common/DateLUT.h>
 #include <common/ErrorHandlers.h>
@@ -41,7 +42,7 @@ std::function<std::shared_ptr<Aws::Utils::Logging::LogSystemInterface>()> GetCon
     return []
     {
         return Aws::MakeShared<Aws::Utils::Logging::ConsoleLogSystem>("console_logger",
-                                                                      Aws::Utils::Logging::LogLevel::Trace);
+                                                                      Aws::Utils::Logging::LogLevel::Warn);
     };
 }
 
@@ -78,10 +79,10 @@ int Runtime::main(const std::vector<std::string> & args)
     attach<StorageSystemNumbers>(*system_database, "numbers", false);
 
     Aws::SDKOptions options;
-    options.loggingOptions.logLevel = Aws::Utils::Logging::LogLevel::Trace;
+    options.loggingOptions.logLevel = Aws::Utils::Logging::LogLevel::Warn;
     options.loggingOptions.logger_create_fn = GetConsoleLoggerFactory();
     InitAPI(options);
-
+    Aws::Http::InitHttp();
 
     // Required for invoking distributed query processing.
     Aws::Client::ClientConfiguration aws_client_config;
@@ -153,6 +154,15 @@ std::string Runtime::handleRequest(std::string const & input)
             tasks.push_back(t.extract<std::string>());
 
         context->getClientInfo().query_kind = ClientInfo::QueryKind::SECONDARY_QUERY;
+
+        size_t task_ix = 0;
+        context->setReadTaskCallback([&task_ix, &tasks]() -> String
+                                     {
+                                         if (task_ix < tasks.size())
+                                             return tasks[task_ix++];
+                                         else
+                                             return {};
+                                     });
     }
 
     if (req_object->has("to_stage"))
@@ -218,7 +228,25 @@ std::string Runtime::handleRequest(std::string const & input)
     auto executor = pipeline.execute();
     executor->execute(pipeline.getNumThreads());
 
-    return result.str();
+    Poco::JSON::Object response_payload;
+
+    if (format == "JSON")
+    {
+        Poco::JSON::Parser out_parser;
+        Poco::Dynamic::Var out_json = parser.parse(result.str());
+        response_payload.set("data", out_json);
+    }
+    else
+    {
+        response_payload.set("data", result.str());
+    }
+
+    std::stringstream response_ostream;
+    Poco::JSON::Stringifier stringifier;
+    stringifier.stringify(
+        response_payload, response_ostream, 2, 2);
+
+    return response_ostream.str();
 }
 
 /** To use with std::set_terminate.

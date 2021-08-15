@@ -36,7 +36,7 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     : header(header_), query(query_), context(context_)
     , scalars(scalars_), external_tables(external_tables_), stage(stage_)
 {
-    create_connections = [&connection_]()
+    create_connections = [connection_]()
     {
         /// For now connections is mostly a placeholder,
         /// create a copy.

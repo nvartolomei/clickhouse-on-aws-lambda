@@ -2,11 +2,16 @@
 // Created by Nicolae Vartolomei on 10/08/2021.
 //
 
+#include <aws/core/http/HttpClientFactory.h>
 #include <Client/LambdaConnections.h>
+#include <DataStreams/NativeBlockInputStream.h>
 #include <Poco/JSON/Object.h>
 #include <Poco/JSON/Parser.h>
 #include <Poco/JSON/Stringifier.h>
 #include <aws/lambda/model/InvokeRequest.h>
+#include <IO/ReadBufferFromString.h>
+#include <Poco/Base64Decoder.h>
+#include <IO/ReadBufferFromIStream.h>
 
 namespace DB
 {
@@ -88,16 +93,26 @@ Packet LambdaConnections::receivePacket()
         request_payload.set("query_id", query_id);
         request_payload.set("to_stage", to_stage);
         request_payload.set("tasks", lambda_connection_context.tasks);
+        request_payload.set("format", "Native");
 
         Poco::JSON::Stringifier stringifier;
 
+        // Reset http configuration as it conflicts w/ CH's poco client.
+        Aws::Http::CleanupHttp();
+        Aws::Http::InitHttp();
+
         Aws::Lambda::Model::InvokeRequest invoke_request;
+
+
         invoke_request.SetFunctionName(lambda_connection_context.function_name);
         std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
         stringifier.stringify(request_payload, *invoke_payload);
         invoke_request.SetBody(invoke_payload);
 
         auto invoke_outcome = lambda_connection_context.lambda_client->Invoke(invoke_request);
+        if (!invoke_outcome.IsSuccess())
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Outcome: failed");
+
         auto invoke_status_code = invoke_outcome.GetResult().GetStatusCode();
         LOG_TRACE(log, "Invoke status code: {}", invoke_status_code);
 
@@ -105,33 +120,51 @@ Packet LambdaConnections::receivePacket()
             throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unexpected status code in sendQuery: {}", invoke_status_code);
 
         Poco::JSON::Parser parser;
-        parser.parse(invoke_outcome.GetResult().GetPayload());
+        Poco::Dynamic::Var result_json = parser.parse(invoke_outcome.GetResult().GetPayload());
+        Poco::JSON::Object::Ptr result_object = result_json.extract<Poco::JSON::Object::Ptr>();
+
+        const String data = result_object->getValue<String>("data");
+        LOG_TRACE(log, "b64result: {}", data);
+
+        std::istringstream data_istream(data);
+        Poco::Base64Decoder b64_decoder(data_istream);
+        ReadBufferFromIStream read_buf(b64_decoder);
+
+        NativeBlockInputStream native_input_stream(read_buf, 0);
+        block = native_input_stream.read();
+
+        LOG_TRACE(log, "Query response read, shape: {}x{}.", block.columns(), block.rows());
     }
 
     /// Empty packet, end of data.
     if (done)
     {
+        LOG_TRACE(log, "EndOfStream");
         Packet res;
         res.type = Protocol::Server::EndOfStream;
         return res;
     }
     else if (!table_structure_done)
     {
+        LOG_TRACE(log, "TableStructure");
         table_structure_done = true;
 
         /// Return table structure.
         Packet res;
         res.type = Protocol::Server::Data;
+        res.block.setColumns(block.cloneEmptyColumns());
 
         return res;
     }
     else
     {
+        LOG_TRACE(log, "Data packet");
         done = true;
 
         /// Return data, if any.
         Packet res;
         res.type = Protocol::Server::Data;
+        res.block = block;
 
         return res;
     }
