@@ -126,6 +126,7 @@ Pipe StorageS3Lambda::read(
         const LambdaConnectionContext connection{
             .function_name = context->getAwsLambdaFunctionName(),
             .tasks = files_by_lambda[lambda_ix],
+            .lambda_client = context->getAwsLambdaClient(),
         };
 
         auto remote_query_executor = std::make_shared<RemoteQueryExecutor>(

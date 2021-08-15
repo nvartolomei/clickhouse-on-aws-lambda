@@ -3,6 +3,10 @@
 //
 
 #include <Client/LambdaConnections.h>
+#include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
+#include <Poco/JSON/Stringifier.h>
+#include <aws/lambda/model/InvokeRequest.h>
 
 namespace DB
 {
@@ -41,7 +45,7 @@ void LambdaConnections::sendQuery(
     const ConnectionTimeouts & timeouts_,
     const String & query_,
     const String & query_id_,
-    UInt64 stage_,
+    UInt64 to_stage_,
     const ClientInfo & client_info_,
     bool with_pending_data)
 {
@@ -50,8 +54,11 @@ void LambdaConnections::sendQuery(
     timeouts = timeouts_;
     query = query_;
     query_id = query_id_;
-    stage = stage_;
+    to_stage = to_stage_;
     client_info = client_info_;
+
+    std::scoped_lock lock(state_mutex);
+    active_query = true;
 }
 
 void LambdaConnections::sendReadTaskResponse(const String & string)
@@ -68,6 +75,38 @@ Packet LambdaConnections::receivePacket()
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "unexpected receivePacket call on a cancelled query/connection");
 
     std::scoped_lock lock(state_mutex);
+
+    if (!query_sent)
+    {
+        query_sent = true;
+
+        LOG_TRACE(log, "Sending query");
+
+        Poco::JSON::Object request_payload;
+
+        request_payload.set("query", query);
+        request_payload.set("query_id", query_id);
+        request_payload.set("to_stage", to_stage);
+        request_payload.set("tasks", lambda_connection_context.tasks);
+
+        Poco::JSON::Stringifier stringifier;
+
+        Aws::Lambda::Model::InvokeRequest invoke_request;
+        invoke_request.SetFunctionName(lambda_connection_context.function_name);
+        std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
+        stringifier.stringify(request_payload, *invoke_payload);
+        invoke_request.SetBody(invoke_payload);
+
+        auto invoke_outcome = lambda_connection_context.lambda_client->Invoke(invoke_request);
+        auto invoke_status_code = invoke_outcome.GetResult().GetStatusCode();
+        LOG_TRACE(log, "Invoke status code: {}", invoke_status_code);
+
+        if (invoke_status_code != 200)
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unexpected status code in sendQuery: {}", invoke_status_code);
+
+        Poco::JSON::Parser parser;
+        parser.parse(invoke_outcome.GetResult().GetPayload());
+    }
 
     /// Empty packet, end of data.
     if (done)

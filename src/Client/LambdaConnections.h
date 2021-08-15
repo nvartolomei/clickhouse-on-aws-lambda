@@ -6,6 +6,7 @@
 
 #include <Client/IConnections.h>
 #include <Interpreters/ClientInfo.h>
+#include <aws/lambda/LambdaClient.h>
 
 namespace DB
 {
@@ -13,6 +14,7 @@ struct LambdaConnectionContext
 {
     const String function_name;
     const Strings tasks;
+    const std::shared_ptr<Aws::Lambda::LambdaClient> lambda_client;
 };
 
 class LambdaConnections final : public IConnections
@@ -23,6 +25,7 @@ private:
     LambdaConnectionContext lambda_connection_context;
 
     mutable std::mutex state_mutex;
+    bool query_sent = false;
     bool cancelled = false;
     bool active_query = false;
     bool table_structure_done = false;
@@ -32,8 +35,11 @@ private:
     ConnectionTimeouts timeouts;
     String query;
     String query_id;
-    UInt64 stage;
+    UInt64 to_stage;
     ClientInfo client_info;
+
+    // response
+    Block block;
 public:
     explicit LambdaConnections(const LambdaConnectionContext & settings);
 
@@ -44,7 +50,7 @@ public:
         const ConnectionTimeouts & timeouts,
         const String & query,
         const String & query_id,
-        UInt64 stage,
+        UInt64 to_stage,
         const ClientInfo & client_info,
         bool with_pending_data) override;
 

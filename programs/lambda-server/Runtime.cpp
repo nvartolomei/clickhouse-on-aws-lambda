@@ -33,6 +33,7 @@
 #include <common/ErrorHandlers.h>
 #include <common/sleep.h>
 #include <daemon/BaseDaemon.h>
+#include <DataStreams/NativeBlockOutputStream.h>
 
 std::function<std::shared_ptr<Aws::Utils::Logging::LogSystemInterface>()> GetConsoleLoggerFactory()
 {
@@ -88,28 +89,6 @@ int Runtime::main(const std::vector<std::string> & args)
     global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
     global_context->setAwsLambdaClient(std::make_shared<Aws::Lambda::LambdaClient>(aws_client_config));
 
-//    LOG_TRACE(&logger(), "Testing lambda client.");
-//    Aws::Lambda::Model::InvokeRequest invoke_request;
-//    invoke_request.SetFunctionName(global_context->getAwsLambdaFunctionName());
-//    std::shared_ptr<Aws::IOStream> invoke_payload = Aws::MakeShared<Aws::StringStream>("");
-//    *invoke_payload << R"({"query":"select 'hello from lambda'"})";
-//    invoke_request.SetBody(invoke_payload);
-//
-//    auto invoke_outcome = lambda_client->Invoke(invoke_request);
-//
-//    LOG_TRACE(&logger(), "Invoke status code: {}", invoke_outcome.GetResult().GetStatusCode());
-//    if (invoke_outcome.GetResult().GetStatusCode() > 0)
-//    {
-//        std::stringstream invoke_response_ss;
-//        invoke_response_ss << invoke_outcome.GetResult().GetPayload().rdbuf();
-//
-//        LOG_TRACE(&logger(), "Invoke response: {}", invoke_response_ss.str());
-//    }
-//
-//    LOG_TRACE(&logger(), "Invoke error: {}", invoke_outcome.GetError().GetMessage());
-
-
-
     if (args.size() == 1 && args[0] == "local")
     {
         // Local test mode, reads payload from stdin.
@@ -150,6 +129,11 @@ int Runtime::main(const std::vector<std::string> & args)
 
 std::string Runtime::handleRequest(std::string const & input)
 {
+    LOG_TRACE(&logger(), "handleRequest");
+
+    Strings tasks;
+    QueryProcessingStage::Enum to_stage = QueryProcessingStage::Complete;
+
     Poco::JSON::Parser parser;
     Poco::Dynamic::Var input_json = parser.parse(input);
     Poco::JSON::Object::Ptr req_object = input_json.extract<Poco::JSON::Object::Ptr>();
@@ -159,13 +143,29 @@ std::string Runtime::handleRequest(std::string const & input)
     context->makeQueryContext();
     context->setCurrentQueryId("a-lambda-query");
 
+    if (req_object->has("tasks"))
+    {
+        LOG_TRACE(&logger(), "Query with tasks: {}", fmt::join(tasks, ", "));
+
+        for (const auto & t : *req_object->getArray("tasks"))
+            tasks.push_back(t.extract<std::string>());
+
+        context->getClientInfo().query_kind = ClientInfo::QueryKind::SECONDARY_QUERY;
+    }
+
+    if (req_object->has("to_stage"))
+    {
+        LOG_TRACE(&logger(), "Execute to to_stage: {}", to_stage);
+        to_stage = QueryProcessingStage::Enum(req_object->getValue<UInt64>("to_stage"));
+    }
+
     CurrentThread::QueryScope query_scope(context);
 
     std::stringstream result;
     result.exceptions(std::ios::failbit);
     WriteBufferFromOStream out_buf(result);
 
-    BlockIO streams = executeQuery(query, context, false);
+    BlockIO streams = executeQuery(query, context, false, to_stage);
     auto & pipeline = streams.pipeline;
 
     if (!pipeline.isCompleted())
@@ -266,7 +266,7 @@ static void blockSignals(const std::vector<int> & signals)
 using signal_function = void(int, siginfo_t *, void *);
 
 static void addSignalHandler(const std::vector<int> & signals, signal_function handler,
-                             std::vector<int> *out_handled_signals)
+                             std::vector<int> * out_handled_signals)
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -316,7 +316,7 @@ static void call_default_signal_handler(int sig)
 
 /** Handler for "fault" or diagnostic signals. Send data about fault to separate thread to write into log.
   */
-static void signalHandler(int sig, siginfo_t *info, void *context)
+static void signalHandler(int sig, siginfo_t * info, void * context)
 {
     DENY_ALLOCATIONS_IN_SCOPE;
     auto saved_errno = errno;   /// We must restore previous value of errno in signal handler.
@@ -359,7 +359,7 @@ public:
     }
 
 private:
-    Poco::Logger *log;
+    Poco::Logger * log;
 public:
     enum Signals : int
     {
@@ -388,7 +388,7 @@ public:
                 StackTrace stack_trace(NoCapture{});
                 UInt32 thread_num{};
                 std::string query_id;
-                DB::ThreadStatus *thread_ptr{};
+                DB::ThreadStatus * thread_ptr{};
 
                 // if (sig != SanitizerTrap)
                 // {
@@ -416,7 +416,7 @@ public:
         const StackTrace & stack_trace,
         UInt32 thread_num,
         const std::string & query_id,
-        DB::ThreadStatus *thread_ptr) const
+        DB::ThreadStatus * thread_ptr) const
     {
         DB::ThreadStatus thread_status;
 
