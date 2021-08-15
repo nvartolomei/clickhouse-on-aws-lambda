@@ -27,6 +27,7 @@
 #include <aws/lambda-runtime/runtime.h>
 #include <aws/lambda/LambdaClient.h>
 #include <Poco/ConsoleChannel.h>
+#include <Poco/Base64Encoder.h>
 #include <Poco/JSON/Parser.h>
 #include <Common/PipeFDs.h>
 #include <common/DateLUT.h>
@@ -133,6 +134,7 @@ std::string Runtime::handleRequest(std::string const & input)
 
     Strings tasks;
     QueryProcessingStage::Enum to_stage = QueryProcessingStage::Complete;
+    String format = "JSON";
 
     Poco::JSON::Parser parser;
     Poco::Dynamic::Var input_json = parser.parse(input);
@@ -155,15 +157,32 @@ std::string Runtime::handleRequest(std::string const & input)
 
     if (req_object->has("to_stage"))
     {
-        LOG_TRACE(&logger(), "Execute to to_stage: {}", to_stage);
         to_stage = QueryProcessingStage::Enum(req_object->getValue<UInt64>("to_stage"));
+        LOG_TRACE(&logger(), "Execute to to_stage: {}", to_stage);
+    }
+
+    if (req_object->has("format"))
+    {
+        format = req_object->getValue<String>("format");
+        LOG_TRACE(&logger(), "Execute with format: {}", format);
     }
 
     CurrentThread::QueryScope query_scope(context);
 
     std::stringstream result;
+    std::ostream * result_stream = &result;
     result.exceptions(std::ios::failbit);
-    WriteBufferFromOStream out_buf(result);
+    std::optional<Poco::Base64Encoder> b64_encoder;
+
+    // 100 binary data. Base64 encode to be safe-ish with JSON
+    // and lambda runtime.
+    if (to_stage == QueryProcessingStage::WithMergeableState)
+    {
+        b64_encoder.emplace(result);
+        result_stream = &b64_encoder.value();
+    }
+
+    WriteBufferFromOStream out_buf(*result_stream);
 
     BlockIO streams = executeQuery(query, context, false, to_stage);
     auto & pipeline = streams.pipeline;
@@ -173,8 +192,9 @@ std::string Runtime::handleRequest(std::string const & input)
         pipeline.addSimpleTransform(
             [](const Block & header) { return std::make_shared<MaterializingTransform>(header); });
 
-        auto out = FormatFactory::instance().getOutputFormatParallelIfPossible("JSON", out_buf, pipeline.getHeader(),
-                                                                               context, {}, {});
+        auto out = FormatFactory::instance().getOutputFormatParallelIfPossible(
+            format, out_buf, pipeline.getHeader(), context, {}, {});
+
         out->setAutoFlush();
 
         /// Save previous progress callback if any. TODO Do it more conveniently.
