@@ -52,8 +52,6 @@ run_cmake() {
   mkdir -p "$build_dir"
 
   cmake -B "$build_dir" \
-      -DCMAKE_BUILD_TYPE=Debug \
-      -DSANITIZE=address \
       -DPARALLEL_LINK_JOBS=6 \
       -DPARALLEL_COMPILE_JOBS=6 \
       -DENABLE_THINLTO=0 \
