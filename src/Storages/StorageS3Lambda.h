@@ -49,6 +49,8 @@ protected:
         const String & compression_method_);
 
 private:
+    Poco::Logger * log;
+
     StorageS3::ClientAuthentication client_auth;
 
     String filename;

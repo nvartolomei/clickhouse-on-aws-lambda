@@ -87,6 +87,7 @@ int Runtime::main(const std::vector<std::string> & args)
     // Required for invoking distributed query processing.
     Aws::Client::ClientConfiguration aws_client_config;
     aws_client_config.region = Aws::Environment::GetEnv("AWS_REGION");
+    aws_client_config.requestTimeoutMs = 30 * 60 * 1000; // 30 minutes, capped at 15 by aws lambda.
 
     global_context->setAwsLambdaFunctionName(Aws::Environment::GetEnv("AWS_LAMBDA_FUNCTION_NAME"));
     global_context->setAwsLambdaClient(std::make_shared<Aws::Lambda::LambdaClient>(aws_client_config));
@@ -132,6 +133,7 @@ int Runtime::main(const std::vector<std::string> & args)
 std::string Runtime::handleRequest(std::string const & input)
 {
     LOG_TRACE(&logger(), "handleRequest");
+    ThreadStatus thread_status;
 
     Strings tasks;
     QueryProcessingStage::Enum to_stage = QueryProcessingStage::Complete;
@@ -146,36 +148,47 @@ std::string Runtime::handleRequest(std::string const & input)
     context->makeQueryContext();
     context->setCurrentQueryId("a-lambda-query");
 
+    std::mutex task_ix_mutex;
+    size_t task_ix = 0;
+    auto *log = &logger();
+
+    context->getClientInfo().query_kind = ClientInfo::QueryKind::INITIAL_QUERY;
+
     if (req_object->has("tasks"))
     {
-        LOG_TRACE(&logger(), "Query with tasks: {}", fmt::join(tasks, ", "));
-
-        for (const auto & t : *req_object->getArray("tasks"))
-            tasks.push_back(t.extract<std::string>());
+        Poco::JSON::Array::Ptr tasks_array = req_object->getArray("tasks");
+        for (size_t ix = 0; ix < tasks_array->size(); ix++)
+            tasks.push_back(tasks_array->getElement<String>(ix));
 
         context->getClientInfo().query_kind = ClientInfo::QueryKind::SECONDARY_QUERY;
 
-        size_t task_ix = 0;
-        context->setReadTaskCallback([&task_ix, &tasks]() -> String
-                                     {
-                                         if (task_ix < tasks.size())
-                                             return tasks[task_ix++];
-                                         else
-                                             return {};
-                                     });
+        context->setReadTaskCallback(
+            [&tasks, &task_ix, &task_ix_mutex, log]() -> String
+            {
+                std::lock_guard lock(task_ix_mutex);
+
+                LOG_TRACE(log, "task read: {} out of {}", task_ix, tasks.size());
+
+                if (task_ix < tasks.size())
+                    return tasks[task_ix++];
+                else
+                    return {};
+            });
     }
 
     if (req_object->has("to_stage"))
     {
         to_stage = QueryProcessingStage::Enum(req_object->getValue<UInt64>("to_stage"));
-        LOG_TRACE(&logger(), "Execute to to_stage: {}", to_stage);
     }
 
     if (req_object->has("format"))
     {
         format = req_object->getValue<String>("format");
-        LOG_TRACE(&logger(), "Execute with format: {}", format);
     }
+
+    LOG_TRACE(&logger(), "Query with tasks: {}", fmt::join(tasks, ", "));
+    LOG_TRACE(&logger(), "Execute with format: {}", format);
+    LOG_TRACE(&logger(), "Execute to to_stage: {}", QueryProcessingStage::toString(to_stage));
 
     CurrentThread::QueryScope query_scope(context);
 
@@ -186,7 +199,7 @@ std::string Runtime::handleRequest(std::string const & input)
 
     // 100 binary data. Base64 encode to be safe-ish with JSON
     // and lambda runtime.
-    if (to_stage == QueryProcessingStage::WithMergeableState)
+    if (to_stage != QueryProcessingStage::Complete)
     {
         b64_encoder.emplace(result);
         result_stream = &b64_encoder.value();

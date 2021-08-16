@@ -82,6 +82,7 @@ bool ReadBufferFromS3::nextImpl()
         return false;
 
     working_buffer = internal_buffer = impl->buffer();
+    impl->position() = impl->buffer().end(); // fake read to satisfy invariants
     pos = working_buffer.begin();
 
     ProfileEvents::increment(ProfileEvents::S3ReadBytes, internal_buffer.size());

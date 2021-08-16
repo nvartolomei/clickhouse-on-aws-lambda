@@ -85,7 +85,7 @@ Packet LambdaConnections::receivePacket()
     {
         query_sent = true;
 
-        LOG_TRACE(log, "Sending query");
+        LOG_TRACE(log, "Sending query. With tasks: {};", fmt::join(lambda_connection_context.tasks, ", "));
 
         Poco::JSON::Object request_payload;
 
@@ -119,12 +119,16 @@ Packet LambdaConnections::receivePacket()
         if (invoke_status_code != 200)
             throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unexpected status code in sendQuery: {}", invoke_status_code);
 
+        auto err = invoke_outcome.GetResult().GetFunctionError();
+        if (!err.empty())
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "sendQuery got error: {}", err);
+
         Poco::JSON::Parser parser;
         Poco::Dynamic::Var result_json = parser.parse(invoke_outcome.GetResult().GetPayload());
         Poco::JSON::Object::Ptr result_object = result_json.extract<Poco::JSON::Object::Ptr>();
 
         const String data = result_object->getValue<String>("data");
-        LOG_TRACE(log, "b64result: {}", data);
+//        LOG_TRACE(log, "b64result: {}", data);
 
         std::istringstream data_istream(data);
         Poco::Base64Decoder b64_decoder(data_istream);
@@ -139,6 +143,8 @@ Packet LambdaConnections::receivePacket()
     /// Empty packet, end of data.
     if (done)
     {
+        active_query = false;
+
         LOG_TRACE(log, "EndOfStream");
         Packet res;
         res.type = Protocol::Server::EndOfStream;

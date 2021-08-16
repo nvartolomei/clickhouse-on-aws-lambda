@@ -135,6 +135,7 @@ public:
     NamesAndTypesList getVirtuals() const override;
 
 private:
+    Poco::Logger * log;
 
     friend class StorageS3Cluster;
     friend class StorageS3Lambda;

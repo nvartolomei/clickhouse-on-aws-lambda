@@ -3,7 +3,7 @@ SET(AWS_LAMBDA_LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/aws-lambda-cpp")
 file(GLOB LAMBDA_SRC
     "${AWS_LAMBDA_LIBRARY_DIR}/src/*"
     "${CMAKE_CURRENT_BINARY_DIR}/src/*"
-    "${CMAKE_CURRENT_BINARY_DIR}/version.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/src/version.cpp"
 )
 
 add_library(aws_lambda ${LAMBDA_SRC})

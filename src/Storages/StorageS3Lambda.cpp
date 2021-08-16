@@ -54,8 +54,9 @@ StorageS3Lambda::StorageS3Lambda(
     const ConstraintsDescription & constraints_,
     ContextPtr context_,
     const String & compression_method_)
-    : IStorage(table_id_),
-      client_auth{S3::URI{Poco::URI{filename_}}, access_key_id_, secret_access_key_, max_connections_, {}, {}},
+    : IStorage(table_id_)
+    , log(&Poco::Logger::get("StorageS3Lambda"))
+    , client_auth{S3::URI{Poco::URI{filename_}}, access_key_id_, secret_access_key_, max_connections_, {}, {}},
       filename(filename_), format_name(format_name_), lambda_parallelism(lambda_parallelism_),
       compression_method(compression_method_)
 {
@@ -77,6 +78,8 @@ Pipe StorageS3Lambda::read(
     size_t /*max_block_size*/,
     unsigned /*num_streams*/)
 {
+    LOG_TRACE(log, "Query processing stage: {}", QueryProcessingStage::toString(processed_stage));
+
     S3::URI s3_uri(Poco::URI{filename});
     StorageS3::updateClientAndAuthSettings(context, client_auth);
 
@@ -92,7 +95,7 @@ Pipe StorageS3Lambda::read(
     if (files.size() == 0)
         throw new Exception("No files to read", ErrorCodes::NOT_IMPLEMENTED);
 
-    fmt::print("All files: {}\n", fmt::join(files, ", "));
+    LOG_TRACE(log, "All files: {}", fmt::join(files, ", "));
 
     UInt64 actual_parallelism = std::min<UInt64>(files.size(), lambda_parallelism);
     UInt64 files_per_lambda = files.size() / actual_parallelism;
@@ -102,14 +105,14 @@ Pipe StorageS3Lambda::read(
     size_t offset = 0;
     for (size_t ix = 0; ix < actual_parallelism; ix++)
     {
-        size_t sz = files_per_lambda + (files_remainder < ix);
+        size_t sz = files_per_lambda + (files_remainder > ix);
         files_by_lambda.emplace_back(
             files.begin() + offset, files.begin() + offset + sz);
         offset += sz;
     }
 
     for (const auto & v : files_by_lambda)
-        fmt::print("Per lambda: {}\n", fmt::join(v, ", "));
+        LOG_TRACE(log, "Per lambda: {}", fmt::join(v, ", "));
 
     /// Calculate the header. This is significant, because some columns could be thrown away in some cases like query with count(*)
     Block header =

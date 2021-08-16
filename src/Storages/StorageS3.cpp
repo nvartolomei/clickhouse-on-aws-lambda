@@ -339,6 +339,7 @@ StorageS3::StorageS3(
     const String & compression_method_,
     bool distributed_processing_)
     : IStorage(table_id_)
+    , log(&Poco::Logger::get("StorageS3"))
     , client_auth{uri_, access_key_id_, secret_access_key_, max_connections_, {}, {}} /// Client and settings will be updated later
     , format_name(format_name_)
     , max_single_read_retries(max_single_read_retries_)

@@ -1,0 +1,4 @@
+{
+    "tasks": ["edgar_log_file_201706_7d/log20170630_10mb_chunks_incomplete/log20170630_chunk_00.zst"],
+    "query": "select count() hits FROM s3lambda('https://clickhouse-lambda-data.s3.eu-west-2.amazonaws.com/edgar_log_file_201706_7d/test.csv', 'CSVWithNames', 'ip String,date String,time String,zone String,cik String,accession String,extention String,code String,size Float32,idx String,norefer String,noagent String,find String,crawler String,browser String')"
+}
